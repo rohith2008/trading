@@ -28,6 +28,46 @@ const ATR_MULTIPLIER = 1.5;  // Stop = 1.5× ATR from entry
 const DEMO_MODE = true;
 const DEMO_BALANCE = 10000; // $10,000 virtual starting balance
 
+// ── INDIAN MARKET HOURS (IST) ────────────────────────────────────
+// NSE/BSE: Pre-open 9:00 AM, Market open 9:15 AM, Close 3:30 PM
+// Mon–Fri only (no weekends)
+const MARKET_OPEN_H = 9, MARKET_OPEN_M = 15;   // 9:15 AM IST
+const MARKET_CLOSE_H = 15, MARKET_CLOSE_M = 30; // 3:30 PM IST
+
+function getISTTime() {
+  // IST = UTC + 5:30
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  return new Date(now.getTime() + istOffset - (now.getTimezoneOffset() * 60000));
+}
+
+function isMarketOpen() {
+  const ist = getISTTime();
+  const day = ist.getDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false; // weekend
+
+  const h = ist.getHours(), m = ist.getMinutes();
+  const nowMins = h * 60 + m;
+  const openMins = MARKET_OPEN_H * 60 + MARKET_OPEN_M;   // 555
+  const closeMins = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M; // 930
+  return nowMins >= openMins && nowMins < closeMins;
+}
+
+function getMarketStatusMsg() {
+  const ist = getISTTime();
+  const day = ist.getDay();
+  const h = ist.getHours(), m = ist.getMinutes();
+  const pad = (n) => String(n).padStart(2, "0");
+  const timeStr = `${pad(h)}:${pad(m)} IST`;
+  if (day === 0 || day === 6) return `Market CLOSED — weekend (${timeStr})`;
+  const nowMins = h * 60 + m;
+  const openMins = MARKET_OPEN_H * 60 + MARKET_OPEN_M;
+  const closeMins = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M;
+  if (nowMins < openMins) return `Market not open yet — opens 9:15 AM IST (now ${timeStr})`;
+  if (nowMins >= closeMins) return `Market CLOSED — closed at 3:30 PM IST (now ${timeStr})`;
+  return `Market OPEN (${timeStr})`;
+}
+
 // ── BitGet helpers ──────────────────────────────────────────────
 function sign(ts, method, path, body = "") {
   return createHmac("sha256", SECRET_KEY)
@@ -283,9 +323,20 @@ async function main() {
   const modeLabel = DEMO_MODE ? `📝 DEMO MODE — $${DEMO_BALANCE.toLocaleString()} virtual balance` : "🔴 LIVE MODE — real money";
   console.log(`\n🤖 XRP Scalper — VWAP + RSI(3) + EMA(8)`);
   console.log(`Mode: ${modeLabel}`);
+  console.log(`Market: ${getMarketStatusMsg()}`);
   console.log(
     `Symbol: ${SYMBOL} | ${TOTAL_TRADES} trades × ${INTERVAL_MS / 1000}s\n`,
   );
+
+  // Block trading outside market hours (skip in demo for testing)
+  if (!DEMO_MODE && !isMarketOpen()) {
+    console.log(`\n⛔ Cannot trade — ${getMarketStatusMsg()}`);
+    console.log(`   NSE/BSE hours: Mon–Fri, 9:15 AM – 3:30 PM IST`);
+    process.exit(0);
+  }
+  if (DEMO_MODE && !isMarketOpen()) {
+    console.log(`⚠️  Outside market hours — demo running anyway for testing\n`);
+  }
 
   const log = [];
   let holding = "usdt";
@@ -297,6 +348,12 @@ async function main() {
   let totalPnl = 0;
 
   for (let i = 1; i <= TOTAL_TRADES; i++) {
+    // Stop trading if market closes mid-session (live only)
+    if (!DEMO_MODE && !isMarketOpen()) {
+      console.log(`\n⛔ Market closed mid-session — stopping bot`);
+      break;
+    }
+
     const ts = new Date().toISOString();
     const candles = await getCandles(SYMBOL, 30);
     const { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist } = getSignal(candles);
