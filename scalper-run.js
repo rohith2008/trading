@@ -18,6 +18,10 @@ const PASSPHRASE = process.env.BITGET_PASSPHRASE;
 const SYMBOL = "XRPUSDT"; // XRP/USDT spot — low price, above min order size
 const INTERVAL_MS = 10000; // 10 seconds
 const TOTAL_TRADES = 6;
+const RISK_PCT = 0.02;       // Risk 2% of account per trade
+const RR_RATIO = 2;          // Take-profit = 2× stop distance (2:1 R:R)
+const ATR_PERIOD = 14;       // ATR period for stop placement
+const ATR_MULTIPLIER = 1.5;  // Stop = 1.5× ATR from entry
 
 // ── BitGet helpers ──────────────────────────────────────────────
 function sign(ts, method, path, body = "") {
@@ -127,6 +131,20 @@ function calcVWAP(candles) {
   return cumVol === 0 ? candles[candles.length - 1].close : cumTPV / cumVol;
 }
 
+// ── ATR (Average True Range) ────────────────────────────────────
+function calcATR(candles, period = ATR_PERIOD) {
+  if (candles.length < period + 1) return candles[candles.length - 1].high - candles[candles.length - 1].low;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high, low = candles[i].low, prevClose = candles[i - 1].close;
+    trs.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
+  }
+  // Wilder's smoothing
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) atr = (atr * (period - 1) + trs[i]) / period;
+  return atr;
+}
+
 // ── Signal logic (mirrors Pine Script) ─────────────────────────
 function getSignal(candles) {
   const closes = candles.map((c) => c.close);
@@ -135,6 +153,7 @@ function getSignal(candles) {
   const ema8 = calcEMA(closes, 8);
   const rsi3 = calcRSI(closes, 3);
   const vwap = calcVWAP(candles);
+  const atr = calcATR(candles);
 
   const bullBias = last > vwap && last > ema8;
   const bearBias = last < vwap && last < ema8;
@@ -143,7 +162,12 @@ function getSignal(candles) {
   if (bullBias && rsi3 < 30) signal = "buy";
   else if (bearBias && rsi3 > 70) signal = "sell";
 
-  return { signal, last, ema8, rsi3, vwap };
+  // Stop-loss and take-profit levels
+  const stopDist = atr * ATR_MULTIPLIER;
+  const stopLoss = signal === "buy" ? last - stopDist : last + stopDist;
+  const takeProfit = signal === "buy" ? last + stopDist * RR_RATIO : last - stopDist * RR_RATIO;
+
+  return { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist };
 }
 
 // ── Order helpers ───────────────────────────────────────────────
@@ -213,16 +237,18 @@ async function main() {
   const log = [];
   let holding = "usdt";
   let lastBuyXrpQty = 0;
+  let lastBuyPrice = 0;
+  let totalPnl = 0;
 
   for (let i = 1; i <= TOTAL_TRADES; i++) {
     const ts = new Date().toISOString();
     const candles = await getCandles(SYMBOL, 30);
-    const { signal, last, ema8, rsi3, vwap } = getSignal(candles);
+    const { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist } = getSignal(candles);
     const bals = await getBalances();
 
     console.log(`[${i}/${TOTAL_TRADES}] ${ts}`);
     console.log(
-      `  Price: $${last.toFixed(4)} | EMA8: ${ema8.toFixed(4)} | RSI3: ${rsi3.toFixed(1)} | VWAP: ${vwap.toFixed(4)}`,
+      `  Price: $${last.toFixed(4)} | EMA8: ${ema8.toFixed(4)} | RSI3: ${rsi3.toFixed(1)} | VWAP: ${vwap.toFixed(4)} | ATR: ${atr.toFixed(4)}`,
     );
     console.log(
       `  USDT: $${bals.usdt.toFixed(4)} | XRP: ${bals.xrp.toFixed(4)} | Signal: ${signal.toUpperCase()}`,
@@ -236,19 +262,29 @@ async function main() {
       ema8,
       rsi3,
       vwap,
+      atr,
       signal,
+      stopLoss: signal !== "flat" ? +stopLoss.toFixed(4) : null,
+      takeProfit: signal !== "flat" ? +takeProfit.toFixed(4) : null,
+      riskReward: RR_RATIO,
       orderPlaced: false,
     };
 
     if (signal === "buy" && holding === "usdt" && bals.usdt >= 1) {
       side = "buy";
-      size = (bals.usdt * 0.9).toFixed(4);
-      label = `BUY XRP with $${size} USDT`;
+      // Risk 2% of account: position size = (account * riskPct) / stopDist
+      const riskUSDT = bals.usdt * RISK_PCT;
+      const xrpQty = riskUSDT / stopDist;
+      size = Math.min(xrpQty, bals.usdt / last * 0.99); // cap at 99% of balance
+      size = (Math.floor(size * 10000) / 10000).toFixed(4);
+      label = `BUY ${size} XRP | SL: $${stopLoss.toFixed(4)} | TP: $${takeProfit.toFixed(4)} (2% risk)`;
       holding = "xrp";
     } else if (signal === "sell" && holding === "xrp" && lastBuyXrpQty >= 1) {
       side = "sell";
       size = (Math.floor(lastBuyXrpQty * 10000) / 10000).toFixed(4);
-      label = `SELL ${size} XRP → USDT`;
+      const pnl = (last - lastBuyPrice) * lastBuyXrpQty;
+      const pnlPct = ((last - lastBuyPrice) / lastBuyPrice * 100).toFixed(2);
+      label = `SELL ${size} XRP | P&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(4)} (${pnlPct}%)`;
       holding = "usdt";
     } else {
       const reason =
@@ -278,10 +314,12 @@ async function main() {
       if (ok) {
         console.log(`  ✅ BUY PLACED — ${orderId}`);
         lastBuyXrpQty = await getOrderFill(orderId);
+        lastBuyPrice = last;
         console.log(
-          `  📦 Filled: ${lastBuyXrpQty.toFixed(4)} XRP — waiting for lock to clear...`,
+          `  📦 Filled: ${lastBuyXrpQty.toFixed(4)} XRP @ $${last.toFixed(4)} — SL: $${stopLoss.toFixed(4)} | TP: $${takeProfit.toFixed(4)}`,
         );
         entry.filledQty = lastBuyXrpQty;
+        entry.entryPrice = last;
       } else {
         console.log(`  ❌ Rejected: ${res.msg}`);
         holding = "usdt";
@@ -293,10 +331,15 @@ async function main() {
       entry.orderPlaced = ok;
 
       if (ok) {
+        const tradePnl = (last - lastBuyPrice) * soldQty;
+        totalPnl += tradePnl;
+        entry.exitPrice = last;
+        entry.pnl = +tradePnl.toFixed(4);
         console.log(
-          `  ✅ SELL PLACED — ${entry.orderId} (${soldQty.toFixed(4)} XRP)`,
+          `  ✅ SELL PLACED — ${entry.orderId} (${soldQty.toFixed(4)} XRP) | Trade P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`,
         );
         lastBuyXrpQty = 0;
+        lastBuyPrice = 0;
       } else {
         console.log(`  ❌ Sell failed: ${res.msg}`);
         holding = "xrp"; // still holding
@@ -324,7 +367,10 @@ async function main() {
   console.log(`  Total est. value: $${totalValue.toFixed(4)}`);
 
   const placed = log.filter((e) => e.orderPlaced).length;
-  console.log(`\n✅ Done — ${placed}/${TOTAL_TRADES} orders placed.\n`);
+  const wins = log.filter((e) => e.pnl > 0).length;
+  const losses = log.filter((e) => e.pnl < 0).length;
+  console.log(`\n✅ Done — ${placed}/${TOTAL_TRADES} orders placed.`);
+  console.log(`  Wins: ${wins} | Losses: ${losses} | Session P&L: ${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(4)}\n`);
 
   const existing = existsSync("safety-check-log.json")
     ? JSON.parse(readFileSync("safety-check-log.json", "utf8"))
