@@ -87,12 +87,8 @@ function volActive(candles) {
   return vols[vols.length - 1] >= avg * VOL_RATIO;
 }
 
-// ── Backtest ────────────────────────────────────────────────────
-async function runBacktest() {
-  console.log(`\n🔬 Backtesting ${SYMBOL} — last 500 1-min candles\n`);
-  const candles = await fetchCandles("1min", 500);
-  console.log(`Loaded ${candles.length} candles\n`);
-
+// ── Single backtest run ─────────────────────────────────────────
+function simulate(candles, atrMult, rrRatio) {
   let balance = INITIAL_BAL;
   let holding = false;
   let entryPrice = 0, entryQty = 0, entryStop = 0, entryTP = 0, entryCost = 0;
@@ -107,71 +103,108 @@ async function runBacktest() {
     const v = vwap(window);
     const a = atr(window);
     const active = volActive(window);
-    const stopDist = a * ATR_MULT;
+    const stopDist = a * atrMult;
 
     if (holding) {
-      // Check stop or TP
       if (last <= entryStop || last >= entryTP) {
         const sellFee = last * entryQty * (FEE_SELL + SLIPPAGE);
         const gross = last * entryQty - entryCost;
         const net = gross - sellFee;
         balance += last * entryQty - sellFee;
-        trades.push({ entry: entryPrice, exit: last, qty: entryQty, gross: +gross.toFixed(4), net: +net.toFixed(4), exit_reason: last <= entryStop ? "stop" : "tp" });
+        trades.push({ entry: entryPrice, exit: last, qty: entryQty, net: +net.toFixed(4), exit_reason: last <= entryStop ? "stop" : "tp" });
         holding = false;
       }
     } else {
       const bullBias = last > v && last > e8;
       if (active && bullBias && r3 < 30) {
-        const riskAmt = balance * RISK_PCT;
-        const qty = Math.min(riskAmt / stopDist, balance / last * 0.99);
+        const qty = Math.min(balance * RISK_PCT / stopDist, balance / last * 0.99);
         const buyFee = last * qty * (FEE_BUY + SLIPPAGE);
         entryCost = last * qty + buyFee;
         if (entryCost <= balance) {
           balance -= entryCost;
           entryPrice = last; entryQty = qty;
           entryStop = last - stopDist;
-          entryTP = last + stopDist * RR_RATIO;
+          entryTP = last + stopDist * rrRatio;
           holding = true;
         }
       }
     }
   }
 
-  // Force close at end
   if (holding) {
     const exitPrice = candles[candles.length - 1].close;
     const sellFee = exitPrice * entryQty * (FEE_SELL + SLIPPAGE);
     const gross = exitPrice * entryQty - entryCost;
-    const net = gross - sellFee;
     balance += exitPrice * entryQty - sellFee;
-    trades.push({ entry: entryPrice, exit: exitPrice, qty: entryQty, gross: +gross.toFixed(4), net: +net.toFixed(4), exit_reason: "end" });
+    trades.push({ entry: entryPrice, exit: exitPrice, qty: entryQty, net: +(gross - sellFee).toFixed(4), exit_reason: "end" });
   }
 
   const wins = trades.filter((t) => t.net > 0);
   const losses = trades.filter((t) => t.net <= 0);
   const totalNet = trades.reduce((s, t) => s + t.net, 0);
-  const winRate = trades.length > 0 ? (wins.length / trades.length * 100).toFixed(1) : 0;
-  const avgWin = wins.length > 0 ? (wins.reduce((s, t) => s + t.net, 0) / wins.length).toFixed(4) : 0;
-  const avgLoss = losses.length > 0 ? (losses.reduce((s, t) => s + t.net, 0) / losses.length).toFixed(4) : 0;
-  const profitFactor = losses.length > 0 ? Math.abs(wins.reduce((s, t) => s + t.net, 0) / losses.reduce((s, t) => s + t.net, 0)).toFixed(2) : "∞";
+  const winRate = trades.length > 0 ? wins.length / trades.length * 100 : 0;
+  const pf = losses.length > 0 && wins.length > 0
+    ? Math.abs(wins.reduce((s, t) => s + t.net, 0) / losses.reduce((s, t) => s + t.net, 0))
+    : wins.length > 0 ? Infinity : 0;
 
-  console.log(`${"═".repeat(50)}`);
-  console.log(`  📊 BACKTEST RESULTS`);
-  console.log(`${"═".repeat(50)}`);
-  console.log(`  Start Balance : $${INITIAL_BAL.toFixed(2)}`);
-  console.log(`  End Balance   : $${balance.toFixed(2)}`);
-  console.log(`  Total Return  : ${((balance - INITIAL_BAL) / INITIAL_BAL * 100).toFixed(2)}%`);
-  console.log(`  Net P&L       : ${totalNet >= 0 ? "+" : ""}$${totalNet.toFixed(4)}`);
-  console.log(`${"─".repeat(50)}`);
-  console.log(`  Total Trades  : ${trades.length} (${wins.length}W / ${losses.length}L)`);
-  console.log(`  Win Rate      : ${winRate}%`);
-  console.log(`  Avg Win       : +$${avgWin}`);
-  console.log(`  Avg Loss      : $${avgLoss}`);
-  console.log(`  Profit Factor : ${profitFactor}`);
-  console.log(`${"═".repeat(50)}\n`);
+  return {
+    atrMult, rrRatio,
+    endBalance: +balance.toFixed(2),
+    returnPct: +((balance - INITIAL_BAL) / INITIAL_BAL * 100).toFixed(2),
+    totalTrades: trades.length,
+    wins: wins.length, losses: losses.length,
+    winRate: +winRate.toFixed(1),
+    totalNet: +totalNet.toFixed(4),
+    profitFactor: +pf.toFixed(2),
+    trades,
+  };
+}
 
-  writeFileSync("backtest-results.json", JSON.stringify({ summary: { startBalance: INITIAL_BAL, endBalance: +balance.toFixed(2), returnPct: +((balance - INITIAL_BAL) / INITIAL_BAL * 100).toFixed(2), totalTrades: trades.length, winRate: +winRate, profitFactor: +profitFactor }, trades }, null, 2));
-  console.log(`Results saved to backtest-results.json\n`);
+// ── Optimiser ───────────────────────────────────────────────────
+async function runBacktest() {
+  console.log(`\n🔬 Parameter Optimisation — ${SYMBOL} (last 500 1-min candles)\n`);
+  const candles = await fetchCandles("1min", 500);
+  console.log(`Loaded ${candles.length} candles — testing parameter combinations...\n`);
+
+  const atrMults = [0.8, 1.0, 1.2, 1.5, 2.0];
+  const rrRatios = [1.5, 2.0, 2.5, 3.0];
+
+  const results = [];
+  for (const atrMult of atrMults) {
+    for (const rrRatio of rrRatios) {
+      results.push(simulate(candles, atrMult, rrRatio));
+    }
+  }
+
+  // Sort by profit factor then return %
+  results.sort((a, b) => b.profitFactor - a.profitFactor || b.returnPct - a.returnPct);
+
+  console.log(`${"═".repeat(72)}`);
+  console.log(`  ATR×  RR   Trades  WinRate  Return%   Net P&L   ProfitFactor`);
+  console.log(`${"─".repeat(72)}`);
+  for (const r of results) {
+    const flag = r === results[0] ? " ⭐ BEST" : "";
+    console.log(
+      `  ${r.atrMult.toFixed(1)}   ${r.rrRatio.toFixed(1)}   ${String(r.totalTrades).padEnd(6)}  ${String(r.winRate + "%").padEnd(8)} ${String(r.returnPct + "%").padEnd(9)} $${String(r.totalNet.toFixed(2)).padEnd(9)} ${r.profitFactor}${flag}`
+    );
+  }
+  console.log(`${"═".repeat(72)}`);
+
+  const best = results[0];
+  console.log(`\n⭐ Best settings: ATR×${best.atrMult}  R:R ${best.rrRatio}:1`);
+  console.log(`   Win Rate: ${best.winRate}% | Return: ${best.returnPct}% | Profit Factor: ${best.profitFactor}\n`);
+
+  // Apply best params to scalper-run.js automatically
+  const fs = await import("fs");
+  const scalper = fs.readFileSync("scalper-run.js", "utf8");
+  const updated = scalper
+    .replace(/const ATR_MULTIPLIER = [\d.]+;/, `const ATR_MULTIPLIER = ${best.atrMult};  // optimised`)
+    .replace(/const RR_RATIO = [\d.]+;/, `const RR_RATIO = ${best.rrRatio};          // optimised`);
+  fs.writeFileSync("scalper-run.js", updated);
+  console.log(`✅ scalper-run.js updated with best parameters\n`);
+
+  writeFileSync("backtest-results.json", JSON.stringify({ best: { atrMult: best.atrMult, rrRatio: best.rrRatio, winRate: best.winRate, returnPct: best.returnPct, profitFactor: best.profitFactor }, allResults: results.map(({ trades, ...r }) => r) }, null, 2));
+  console.log(`Full results saved to backtest-results.json\n`);
 }
 
 runBacktest().catch((err) => { console.error("Fatal:", err.message); process.exit(1); });

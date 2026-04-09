@@ -19,9 +19,9 @@ const SYMBOL = "XRPUSDT"; // XRP/USDT spot — low price, above min order size
 const INTERVAL_MS = 10000; // 10 seconds
 const TOTAL_TRADES = 6;
 const RISK_PCT = 0.02;       // Risk 2% of account per trade
-const RR_RATIO = 2;          // Take-profit = 2× stop distance (2:1 R:R)
+const RR_RATIO = 2.5;          // optimised          // Take-profit = 2× stop distance (2:1 R:R)
 const ATR_PERIOD = 14;       // ATR period for stop placement
-const ATR_MULTIPLIER = 1.5;  // Stop = 1.5× ATR from entry
+const ATR_MULTIPLIER = 2;  // optimised  // Stop = 1.5× ATR from entry
 
 // ── FEES & SLIPPAGE (AngelOne intraday) ─────────────────────────
 // Brokerage: 0.03% per side, STT: 0.025% on sell, Exchange: 0.00325%
