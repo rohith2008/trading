@@ -123,10 +123,11 @@ const demo = {
 };
 
 function demoBuy(price, size) {
-  const cost = price * parseFloat(size);
+  const qty = parseFloat(size);
+  const cost = price * qty * (1 + FEE_BUY + SLIPPAGE); // include fees
   if (cost > demo.usdt) return { code: "ERR", msg: "Insufficient demo balance" };
   demo.usdt -= cost;
-  demo.xrp += parseFloat(size);
+  demo.xrp += qty;
   demo.orderCount++;
   return { code: "00000", data: { orderId: `DEMO-${demo.orderCount}` } };
 }
@@ -338,8 +339,9 @@ async function placeSellWithRetry(qty, maxRetries = 12, retryDelayMs = 3000, pri
     const size = (Math.floor(qty * 10000) / 10000).toFixed(4);
     const res = demoSell(size);
     if (res.code === "00000") {
-      demo.usdt += price * parseFloat(size); // credit sale proceeds
-      return { ok: true, res, soldQty: parseFloat(size) };
+      const qty = parseFloat(size);
+      demo.usdt += price * qty * (1 - FEE_SELL - SLIPPAGE); // credit proceeds minus fees
+      return { ok: true, res, soldQty: qty };
     }
     return { ok: false, res, soldQty: 0 };
   }
@@ -458,10 +460,13 @@ async function main() {
         console.log(`  🛑 TRAILING STOP HIT @ $${last.toFixed(4)} — forcing sell`);
         const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
         if (ok) {
-          const tradePnl = (last - lastBuyPrice) * soldQty;
+          const sellFee = last * soldQty * (FEE_SELL + SLIPPAGE);
+          totalFees += sellFee;
+          const grossPnl = last * soldQty - lastBuyCost;
+          const tradePnl = grossPnl - sellFee;
           totalPnl += tradePnl;
-          log.push({ tick: i, timestamp: ts, price: last, signal: "trailing-stop", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
-          console.log(`  💰 Sold ${soldQty} XRP | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
+          log.push({ tick: i, timestamp: ts, price: last, signal: "trailing-stop", side: "sell", orderPlaced: true, exitPrice: last, fees: +(lastBuyFee + sellFee).toFixed(4), pnl: +tradePnl.toFixed(4) });
+          console.log(`  💰 Sold ${soldQty} XRP | Fees: -$${sellFee.toFixed(4)} | Net P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
           lastBuyXrpQty = 0; lastBuyPrice = 0; lastBuyCost = 0; lastBuyFee = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
@@ -471,10 +476,13 @@ async function main() {
         console.log(`  🎯 TAKE PROFIT HIT @ $${last.toFixed(4)} — forcing sell`);
         const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
         if (ok) {
-          const tradePnl = (last - lastBuyPrice) * soldQty;
+          const sellFee = last * soldQty * (FEE_SELL + SLIPPAGE);
+          totalFees += sellFee;
+          const grossPnl = last * soldQty - lastBuyCost;
+          const tradePnl = grossPnl - sellFee;
           totalPnl += tradePnl;
-          log.push({ tick: i, timestamp: ts, price: last, signal: "take-profit", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
-          console.log(`  💰 Sold ${soldQty} XRP | P&L: +$${tradePnl.toFixed(4)}`);
+          log.push({ tick: i, timestamp: ts, price: last, signal: "take-profit", side: "sell", orderPlaced: true, exitPrice: last, fees: +(lastBuyFee + sellFee).toFixed(4), pnl: +tradePnl.toFixed(4) });
+          console.log(`  💰 Sold ${soldQty} XRP | Fees: -$${sellFee.toFixed(4)} | Net P&L: +$${tradePnl.toFixed(4)}`);
           lastBuyXrpQty = 0; lastBuyPrice = 0; lastBuyCost = 0; lastBuyFee = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
@@ -588,9 +596,12 @@ async function main() {
     console.log(`\n⚠️  Session ended with open position — liquidating ${lastBuyXrpQty.toFixed(4)} XRP @ $${exitPrice.toFixed(4)}`);
     const { ok, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, exitPrice);
     if (ok) {
-      const tradePnl = (exitPrice - lastBuyPrice) * soldQty;
+      const sellFee = exitPrice * soldQty * (FEE_SELL + SLIPPAGE);
+      totalFees += sellFee;
+      const grossPnl = exitPrice * soldQty - lastBuyCost;
+      const tradePnl = grossPnl - sellFee;
       totalPnl += tradePnl;
-      console.log(`  💰 Liquidated | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
+      console.log(`  💰 Liquidated | Fees: -$${sellFee.toFixed(4)} | Net P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
     } else {
       console.log(`  ❌ Liquidation failed — close manually`);
     }
