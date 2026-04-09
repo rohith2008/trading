@@ -19,9 +19,9 @@ const SYMBOL = "XRPUSDT"; // XRP/USDT spot — low price, above min order size
 const INTERVAL_MS = 10000; // 10 seconds
 const TOTAL_TRADES = 6;
 const RISK_PCT = 0.02;       // Risk 2% of account per trade
-const RR_RATIO = 2.5;          // optimised          // Take-profit = 2× stop distance (2:1 R:R)
+const RR_RATIO = 2.5;        // Take-profit = 2.5× stop distance (2.5:1 R:R)
 const ATR_PERIOD = 14;       // ATR period for stop placement
-const ATR_MULTIPLIER = 2;  // optimised  // Stop = 1.5× ATR from entry
+const ATR_MULTIPLIER = 2;    // Stop = 2× ATR from entry
 
 // ── FEES & SLIPPAGE (AngelOne intraday) ─────────────────────────
 // Brokerage: 0.03% per side, STT: 0.025% on sell, Exchange: 0.00325%
@@ -462,7 +462,7 @@ async function main() {
           totalPnl += tradePnl;
           log.push({ tick: i, timestamp: ts, price: last, signal: "trailing-stop", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
           console.log(`  💰 Sold ${soldQty} XRP | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
-          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
+          lastBuyXrpQty = 0; lastBuyPrice = 0; lastBuyCost = 0; lastBuyFee = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
         continue;
@@ -475,7 +475,7 @@ async function main() {
           totalPnl += tradePnl;
           log.push({ tick: i, timestamp: ts, price: last, signal: "take-profit", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
           console.log(`  💰 Sold ${soldQty} XRP | P&L: +$${tradePnl.toFixed(4)}`);
-          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
+          lastBuyXrpQty = 0; lastBuyPrice = 0; lastBuyCost = 0; lastBuyFee = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
         continue;
