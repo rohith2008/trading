@@ -229,7 +229,7 @@ async function placeSellWithRetry(qty, maxRetries = 12, retryDelayMs = 3000) {
 
 // ── Main loop ───────────────────────────────────────────────────
 async function main() {
-  console.log(`\n🤖 BTC Scalper — VWAP + RSI(3) + EMA(8)`);
+  console.log(`\n🤖 XRP Scalper — VWAP + RSI(3) + EMA(8)`);
   console.log(
     `Symbol: ${SYMBOL} | ${TOTAL_TRADES} trades × ${INTERVAL_MS / 1000}s\n`,
   );
@@ -279,7 +279,7 @@ async function main() {
       size = (Math.floor(size * 10000) / 10000).toFixed(4);
       label = `BUY ${size} XRP | SL: $${stopLoss.toFixed(4)} | TP: $${takeProfit.toFixed(4)} (2% risk)`;
       holding = "xrp";
-    } else if (signal === "sell" && holding === "xrp" && lastBuyXrpQty >= 1) {
+    } else if (signal === "sell" && holding === "xrp" && lastBuyXrpQty > 0) {
       side = "sell";
       size = (Math.floor(lastBuyXrpQty * 10000) / 10000).toFixed(4);
       const pnl = (last - lastBuyPrice) * lastBuyXrpQty;
