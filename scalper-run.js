@@ -396,6 +396,7 @@ async function main() {
   let lastBuyXrpQty = 0;
   let lastBuyPrice = 0;
   let lastBuyCost = 0;   // total cost including buy fees
+  let lastBuyFee = 0;    // buy-side fee stored for sell-side reporting
   let trailingStop = 0;
   let highSinceEntry = 0;
   let entryTakeProfit = 0;
@@ -526,9 +527,9 @@ async function main() {
         console.log(`  ✅ BUY PLACED — ${orderId}`);
         lastBuyXrpQty = DEMO_MODE ? parseFloat(size) : await getOrderFill(orderId);
         lastBuyPrice = last;
-        const buyFee = last * lastBuyXrpQty * (FEE_BUY + SLIPPAGE);
-        lastBuyCost = last * lastBuyXrpQty + buyFee;
-        totalFees += buyFee;
+        lastBuyFee = last * lastBuyXrpQty * (FEE_BUY + SLIPPAGE);
+        lastBuyCost = last * lastBuyXrpQty + lastBuyFee;
+        totalFees += lastBuyFee;
         trailingStop = stopLoss;
         highSinceEntry = last;
         entryTakeProfit = takeProfit;
@@ -555,7 +556,7 @@ async function main() {
         totalPnl += tradePnl;
         entry.exitPrice = last;
         entry.grossPnl = +grossPnl.toFixed(4);
-        entry.fees = +(buyFee + sellFee).toFixed(4);
+        entry.fees = +(lastBuyFee + sellFee).toFixed(4);
         entry.pnl = +tradePnl.toFixed(4);
         console.log(
           `  ✅ SELL PLACED — ${entry.orderId} (${soldQty.toFixed(4)} XRP) | Gross: ${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(4)} | Fees: -$${sellFee.toFixed(4)} | Net P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`,
@@ -563,6 +564,7 @@ async function main() {
         lastBuyXrpQty = 0;
         lastBuyPrice = 0;
         lastBuyCost = 0;
+        lastBuyFee = 0;
         trailingStop = 0;
       } else {
         console.log(`  ❌ Sell failed: ${res.msg}`);
