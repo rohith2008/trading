@@ -4,21 +4,8 @@
  *
  * Usage: node backtest.js
  */
-import { createHmac } from "crypto";
 import https from "https";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-
-readFileSync(new URL(".env", import.meta.url), "utf8")
-  .split("\n")
-  .forEach((line) => {
-    const [k, ...v] = line.split("=");
-    if (k && !k.startsWith("#") && v.length)
-      process.env[k.trim()] = v.join("=").trim();
-  });
-
-const API_KEY = process.env.BITGET_API_KEY;
-const SECRET_KEY = process.env.BITGET_SECRET_KEY;
-const PASSPHRASE = process.env.BITGET_PASSPHRASE;
+import { writeFileSync } from "fs";
 
 // ── Config ──────────────────────────────────────────────────────
 const SYMBOL       = "XRPUSDT";
@@ -33,22 +20,12 @@ const FEE_BUY      = 0.000418;
 const FEE_SELL     = 0.000668;
 const SLIPPAGE     = 0.0005;
 
-// ── HTTP ────────────────────────────────────────────────────────
-function sign(ts, method, path, body = "") {
-  return createHmac("sha256", SECRET_KEY).update(ts + method + path + body).digest("base64");
-}
-
-function request(method, path) {
+// ── HTTP (public endpoint — no auth needed for candle data) ─────
+function request(path) {
   return new Promise((resolve, reject) => {
-    const ts = Date.now().toString();
-    const sig = sign(ts, method, path);
     const req = https.request({
-      hostname: "api.bitget.com", path, method,
-      headers: {
-        "Content-Type": "application/json",
-        "ACCESS-KEY": API_KEY, "ACCESS-SIGN": sig,
-        "ACCESS-TIMESTAMP": ts, "ACCESS-PASSPHRASE": PASSPHRASE, locale: "en-US",
-      },
+      hostname: "api.bitget.com", path, method: "GET",
+      headers: { "Content-Type": "application/json" },
     }, (res) => {
       let d = "";
       res.on("data", (c) => (d += c));
@@ -60,7 +37,7 @@ function request(method, path) {
 }
 
 async function fetchCandles(granularity = "1min", limit = 500) {
-  const res = await request("GET", `/api/v2/spot/market/candles?symbol=${SYMBOL}&granularity=${granularity}&limit=${limit}`);
+  const res = await request(`/api/v2/spot/market/candles?symbol=${SYMBOL}&granularity=${granularity}&limit=${limit}`);
   return (res.data || []).reverse().map((c) => ({
     ts: parseInt(c[0]), open: parseFloat(c[1]), high: parseFloat(c[2]),
     low: parseFloat(c[3]), close: parseFloat(c[4]), vol: parseFloat(c[5]),

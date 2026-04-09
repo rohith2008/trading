@@ -1,0 +1,44 @@
+{
+  "summary": {
+    "startBalance": 10000,
+    "endBalance": 9970.24,
+    "returnPct": -0.3,
+    "totalTrades": 4,
+    "winRate": 50,
+    "profitFactor": 0.46
+  },
+  "trades": [
+    {
+      "entry": 1.3271,
+      "exit": 1.3326,
+      "qty": 7459.874915228694,
+      "gross": 31.9411,
+      "net": 20.33,
+      "exit_reason": "tp"
+    },
+    {
+      "entry": 1.3328,
+      "exit": 1.3363,
+      "qty": 7443.072246323027,
+      "gross": 16.9441,
+      "net": 5.3269,
+      "exit_reason": "tp"
+    },
+    {
+      "entry": 1.3361,
+      "exit": 1.3353,
+      "qty": 7428.635851952631,
+      "gross": -15.0544,
+      "net": -26.6404,
+      "exit_reason": "stop"
+    },
+    {
+      "entry": 1.3375,
+      "exit": 1.3364,
+      "qty": 7401.141243215085,
+      "gross": -17.2286,
+      "net": -28.7811,
+      "exit_reason": "stop"
+    }
+  ]
+}
