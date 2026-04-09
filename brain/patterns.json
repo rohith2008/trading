@@ -1,0 +1,14 @@
+{
+  "_readme": "Chart/market patterns with tracked outcomes. Win rate updates after every trade that matches a pattern.",
+  "patterns": [
+    {
+      "name": "post-crash-recovery",
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "total_pnl_pct": 0.12,
+      "win_rate_pct": 100,
+      "avg_pnl_pct": 0.12
+    }
+  ]
+}

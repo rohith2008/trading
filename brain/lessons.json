@@ -1,0 +1,20 @@
+{
+  "_readme": "Every lesson learned from a real trade outcome. Claude reads this at session start and applies these before making any trade decision.",
+  "lessons": [
+    {
+      "id": 1,
+      "date": "2026-04-09",
+      "trade_id": 1,
+      "symbol": "NSE:TATAMOTORS",
+      "outcome": "WIN",
+      "pnl_pct": 0.12,
+      "hold_days": 1,
+      "lesson": "WINNER (early exit) — NSE:TATAMOTORS +0.1% in 1d. Did not reach full target (370). Early exit: Exiting swing trade early to redeploy into hot intraday momentum stocks. TATAMOTORS barely moved (+0.4%), better opportunities in OLA Electric and JTL Industries today with real catalysts.. Consider holding longer for target.",
+      "tags": [
+        "buy",
+        "win",
+        "intraday"
+      ]
+    }
+  ]
+}

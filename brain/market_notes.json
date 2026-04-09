@@ -1,0 +1,10 @@
+{
+  "_readme": "Observations about how NSE/Indian markets behave. Sector rotations, time-of-day effects, event reactions.",
+  "notes": [
+    {
+      "date": "2026-04-09",
+      "observation": "Trump tariff shock (Apr 7) caused Nifty to crash from ~24000 to 22182 in one session. Recovery was sharp — +7.7% in 2 days on 3x average volume. Indicates institutional buy-the-dip behavior after macro shocks.",
+      "tags": ["macro", "recovery", "nifty", "institutional"]
+    }
+  ]
+}

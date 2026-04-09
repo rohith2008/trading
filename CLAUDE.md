@@ -2,6 +2,36 @@
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
+## 🧠 PERSISTENT BRAIN — MANDATORY SESSION START
+
+**BEFORE doing anything trading-related, ALWAYS run:**
+```
+node scripts/brain_briefing.js
+```
+This loads your full trading memory: past performance, mistakes never to repeat, pattern win rates, open trades, and dynamic rules built from experience. Skipping this means trading blind.
+
+**To close a trade and extract lessons:**
+```
+node scripts/close_trade.js <trade_id> <exit_price> <win|loss|breakeven> "reason why"
+```
+
+**Brain files (read/write these to learn):**
+- `brain/lessons.json` — every lesson from every trade outcome
+- `brain/mistakes.json` — hard rules built from losses (NEVER repeat)
+- `brain/patterns.json` — setup win rates with stats
+- `brain/market_notes.json` — market behavior observations
+- `brain/performance.json` — running stats: win rate, avg win/loss, drawdown
+- `trade-journal.json` — full trade history
+
+**Learning loop:**
+1. Open session → run brain_briefing.js → absorb everything
+2. Make trade decisions INFORMED by past mistakes and pattern stats
+3. Close trade → run close_trade.js → brain auto-updates
+4. Next session → brain is smarter
+5. Repeat until trusted with real money
+
+**Goal: ₹10,000 → ₹20,000 in 10 days (demo). Target date: 2026-04-19.**
+
 ## Decision Tree — Which Tool When
 
 ### "What's on my chart right now?"

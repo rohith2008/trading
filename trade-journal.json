@@ -1,0 +1,84 @@
+{
+  "account": {
+    "start_date": "2026-04-09",
+    "target_date": "2026-04-19",
+    "starting_capital": 10000,
+    "current_capital": 10011.89,
+    "target": 20000,
+    "currency": "INR"
+  },
+  "strategy": "Swing trades on high-beta NSE stocks during post-tariff market recovery. 2-4 day holds, 1.5:1+ R:R, max 95% capital deployed per trade.",
+  "trades": [
+    {
+      "id": 2,
+      "date": "2026-04-09",
+      "symbol": "NSE:OLAELEC",
+      "action": "BUY",
+      "status": "OPEN",
+      "entry": 36.32,
+      "shares": 130,
+      "capital_used": 4721.60,
+      "stop_loss": 33.50,
+      "target": 40.00,
+      "risk_per_share": 2.82,
+      "reward_per_share": 3.68,
+      "rr_ratio": 1.30,
+      "trade_type": "INTRADAY",
+      "thesis": "OLA Electric March registrations +150% MoM, ₹60k price cut on Roadster X+ driving demand surge. 34% up in 3 days on massive volume (78 crore shares today). Strong fundamental catalyst. Intraday momentum continuation play with EOD exit.",
+      "exit": null,
+      "pnl": null,
+      "pnl_pct": null
+    },
+    {
+      "id": 3,
+      "date": "2026-04-09",
+      "symbol": "NSE:JTLIND",
+      "action": "BUY",
+      "status": "OPEN",
+      "entry": 66.80,
+      "shares": 70,
+      "capital_used": 4676.00,
+      "stop_loss": 61.00,
+      "target": 78.00,
+      "risk_per_share": 5.80,
+      "reward_per_share": 11.20,
+      "rr_ratio": 1.93,
+      "trade_type": "SWING",
+      "thesis": "Abakkus Asset Manager (institutional) bought 9.7M shares at ₹54 on Apr 8 (bulk deal confirmed). Stock up 14% next day — smart money thesis confirmed. Continuing accumulation pattern. Target previous resistance ₹78. Hold 1-2 days.",
+      "exit": null,
+      "pnl": null,
+      "pnl_pct": null
+    },
+    {
+      "id": 1,
+      "date": "2026-04-09",
+      "symbol": "NSE:TATAMOTORS",
+      "action": "BUY",
+      "status": "WIN",
+      "entry": 334.09,
+      "shares": 29,
+      "capital_used": 9688.61,
+      "stop_loss": 310,
+      "target": 370,
+      "risk_per_share": 24.09,
+      "reward_per_share": 35.91,
+      "rr_ratio": 1.49,
+      "thesis": "Post-tariff crash recovery. TATAMOTORS hit 294 low (Apr 7), bounced with 3x avg volume indicating institutional buying. Pre-crash levels ~370-380. Nifty RSI 52 with room to run. EMA 9/21 crossover imminent.",
+      "exit": 334.5,
+      "pnl": 11.89,
+      "pnl_pct": 0.12,
+      "exit_date": "2026-04-09",
+      "exit_reason": "Exiting swing trade early to redeploy into hot intraday momentum stocks. TATAMOTORS barely moved (+0.4%), better opportunities in OLA Electric and JTL Industries today with real catalysts."
+    }
+  ],
+  "log": [
+    {
+      "date": "2026-04-09",
+      "note": "Market context: Nifty down -7.39% over 100 days, crashed to 22182 on Apr 7 (Trump tariff shock), massive recovery +7.7% in 2 days to 23926. TATAMOTORS: crashed 294, bounced 339. Deploying 97% capital into TATAMOTORS recovery trade. Stop at 310 protects against re-test of lows."
+    },
+    {
+      "date": "2026-04-09",
+      "note": "CLOSED Trade #1 NSE:TATAMOTORS @ ₹334.5 | WIN | P&L: ₹11.89 (0.12%) | Exiting swing trade early to redeploy into hot intraday momentum stocks. TATAMOTORS barely moved (+0.4%), better opportunities in OLA Electric and JTL Industries today with real catalysts."
+    }
+  ]
+}

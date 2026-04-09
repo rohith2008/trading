@@ -1,0 +1,28 @@
+{
+  "_readme": "Running performance stats. Updated after every closed trade.",
+  "summary": {
+    "total_trades": 1,
+    "open_trades": 0,
+    "wins": 1,
+    "losses": 0,
+    "win_rate_pct": 100,
+    "avg_win_pct": 0.12,
+    "avg_loss_pct": null,
+    "avg_rr_ratio": null,
+    "best_trade": "NSE:TATAMOTORS +0.12%",
+    "worst_trade": "undefined undefined%",
+    "total_pnl_inr": 11.89,
+    "current_capital_inr": 10011.89,
+    "peak_capital_inr": 10011.89,
+    "max_drawdown_pct": 0
+  },
+  "by_setup": {},
+  "by_symbol": {
+    "NSE:TATAMOTORS": {
+      "trades": 1,
+      "wins": 1,
+      "total_pnl_pct": 0.12272142237122483
+    }
+  },
+  "by_market_condition": {}
+}
