@@ -238,6 +238,7 @@ async function main() {
   let holding = "usdt";
   let lastBuyXrpQty = 0;
   let lastBuyPrice = 0;
+  let trailingStop = 0;   // tracks highest price seen since buy
   let totalPnl = 0;
 
   for (let i = 1; i <= TOTAL_TRADES; i++) {
@@ -269,6 +270,42 @@ async function main() {
       riskReward: RR_RATIO,
       orderPlaced: false,
     };
+
+    // Update trailing stop if holding XRP
+    if (holding === "xrp" && last > trailingStop + (trailingStop * 0.001)) {
+      trailingStop = last - (atr * ATR_MULTIPLIER);
+      console.log(`  📈 Trailing stop updated → $${trailingStop.toFixed(4)}`);
+    }
+
+    // Force sell if trailing stop or take-profit hit
+    if (holding === "xrp" && lastBuyXrpQty > 0) {
+      if (last <= trailingStop) {
+        console.log(`  🛑 TRAILING STOP HIT @ $${last.toFixed(4)} — forcing sell`);
+        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty);
+        if (ok) {
+          const tradePnl = (last - lastBuyPrice) * soldQty;
+          totalPnl += tradePnl;
+          log.push({ tick: i, timestamp: ts, price: last, signal: "trailing-stop", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
+          console.log(`  💰 Sold ${soldQty} XRP | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
+          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; holding = "usdt";
+        }
+        if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
+        continue;
+      }
+      if (last >= takeProfit) {
+        console.log(`  🎯 TAKE PROFIT HIT @ $${last.toFixed(4)} — forcing sell`);
+        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty);
+        if (ok) {
+          const tradePnl = (last - lastBuyPrice) * soldQty;
+          totalPnl += tradePnl;
+          log.push({ tick: i, timestamp: ts, price: last, signal: "take-profit", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
+          console.log(`  💰 Sold ${soldQty} XRP | P&L: +$${tradePnl.toFixed(4)}`);
+          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; holding = "usdt";
+        }
+        if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
+        continue;
+      }
+    }
 
     if (signal === "buy" && holding === "usdt" && bals.usdt >= 1) {
       side = "buy";
@@ -315,6 +352,7 @@ async function main() {
         console.log(`  ✅ BUY PLACED — ${orderId}`);
         lastBuyXrpQty = await getOrderFill(orderId);
         lastBuyPrice = last;
+        trailingStop = stopLoss;
         console.log(
           `  📦 Filled: ${lastBuyXrpQty.toFixed(4)} XRP @ $${last.toFixed(4)} — SL: $${stopLoss.toFixed(4)} | TP: $${takeProfit.toFixed(4)}`,
         );
@@ -340,6 +378,7 @@ async function main() {
         );
         lastBuyXrpQty = 0;
         lastBuyPrice = 0;
+        trailingStop = 0;
       } else {
         console.log(`  ❌ Sell failed: ${res.msg}`);
         holding = "xrp"; // still holding
