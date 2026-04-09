@@ -23,6 +23,17 @@ const RR_RATIO = 2;          // Take-profit = 2× stop distance (2:1 R:R)
 const ATR_PERIOD = 14;       // ATR period for stop placement
 const ATR_MULTIPLIER = 1.5;  // Stop = 1.5× ATR from entry
 
+// ── FEES & SLIPPAGE (AngelOne intraday) ─────────────────────────
+// Brokerage: 0.03% per side, STT: 0.025% on sell, Exchange: 0.00325%
+// GST: 18% on brokerage, SEBI: 0.0001%, Stamp: 0.003% on buy
+const FEE_BUY  = 0.0003 + 0.0000325 + 0.00003 * 1.18 + 0.000001 + 0.00003; // ~0.000418
+const FEE_SELL = 0.0003 + 0.00025 + 0.0000325 + 0.00003 * 1.18 + 0.000001; // ~0.000668
+const SLIPPAGE = 0.0005; // 0.05% slippage per side (market order spread)
+
+// ── VOLUME FILTER ────────────────────────────────────────────────
+const VOL_MA_PERIOD = 20;    // compare current vol to 20-bar average
+const VOL_MIN_RATIO = 1.2;   // current vol must be 1.2× the average (active market)
+
 // ── DEMO MODE ───────────────────────────────────────────────────
 // Set to false and add your AngelOne API key to .env to go live
 const DEMO_MODE = true;
@@ -151,6 +162,21 @@ async function getCandles(symbol, limit = 30) {
   }));
 }
 
+async function getCandles5m(symbol, limit = 20) {
+  const res = await request(
+    "GET",
+    `/api/v2/spot/market/candles?symbol=${symbol}&granularity=5min&limit=${limit}`,
+  );
+  return (res.data || []).map((c) => ({
+    ts: parseInt(c[0]),
+    open: parseFloat(c[1]),
+    high: parseFloat(c[2]),
+    low: parseFloat(c[3]),
+    close: parseFloat(c[4]),
+    vol: parseFloat(c[5]),
+  }));
+}
+
 async function getPrice(symbol) {
   const res = await request(
     "GET",
@@ -220,8 +246,28 @@ function calcATR(candles, period = ATR_PERIOD) {
   return atr;
 }
 
-// ── Signal logic (mirrors Pine Script) ─────────────────────────
-function getSignal(candles) {
+// ── Volume filter ───────────────────────────────────────────────
+function isVolumeActive(candles) {
+  if (candles.length < VOL_MA_PERIOD + 1) return true; // not enough data, allow
+  const vols = candles.map((c) => c.vol);
+  const avgVol = vols.slice(-VOL_MA_PERIOD - 1, -1).reduce((a, b) => a + b, 0) / VOL_MA_PERIOD;
+  const currentVol = vols[vols.length - 1];
+  return currentVol >= avgVol * VOL_MIN_RATIO;
+}
+
+// ── Higher timeframe trend (5-min EMA21) ────────────────────────
+function getHTFTrend(candles5m) {
+  if (!candles5m || candles5m.length < 5) return "neutral";
+  const closes = candles5m.map((c) => c.close);
+  const ema21 = calcEMA(closes, Math.min(21, closes.length));
+  const last = closes[closes.length - 1];
+  if (last > ema21) return "bull";
+  if (last < ema21) return "bear";
+  return "neutral";
+}
+
+// ── Signal logic ────────────────────────────────────────────────
+function getSignal(candles, candles5m) {
   const closes = candles.map((c) => c.close);
   const last = closes[closes.length - 1];
 
@@ -229,20 +275,29 @@ function getSignal(candles) {
   const rsi3 = calcRSI(closes, 3);
   const vwap = calcVWAP(candles);
   const atr = calcATR(candles);
+  const volActive = isVolumeActive(candles);
+  const htfTrend = getHTFTrend(candles5m);
 
   const bullBias = last > vwap && last > ema8;
   const bearBias = last < vwap && last < ema8;
 
   let signal = "flat";
-  if (bullBias && rsi3 < 30) signal = "buy";
-  else if (bearBias && rsi3 > 70) signal = "sell";
+  let filterReason = "";
+
+  if (!volActive) {
+    filterReason = "low volume — sideways market";
+  } else if (bullBias && rsi3 < 30 && htfTrend !== "bear") {
+    signal = "buy";  // 5m trend must not be bearish
+  } else if (bearBias && rsi3 > 70 && htfTrend !== "bull") {
+    signal = "sell"; // 5m trend must not be bullish
+  }
 
   // Stop-loss and take-profit levels
   const stopDist = atr * ATR_MULTIPLIER;
   const stopLoss = signal === "buy" ? last - stopDist : last + stopDist;
   const takeProfit = signal === "buy" ? last + stopDist * RR_RATIO : last - stopDist * RR_RATIO;
 
-  return { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist };
+  return { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist, volActive, htfTrend, filterReason };
 }
 
 // ── Order helpers ───────────────────────────────────────────────
@@ -340,10 +395,12 @@ async function main() {
   let holding = "usdt";
   let lastBuyXrpQty = 0;
   let lastBuyPrice = 0;
+  let lastBuyCost = 0;   // total cost including buy fees
   let trailingStop = 0;
-  let highSinceEntry = 0;   // highest price seen since last buy
-  let entryTakeProfit = 0;  // TP locked at entry price
+  let highSinceEntry = 0;
+  let entryTakeProfit = 0;
   let totalPnl = 0;
+  let totalFees = 0;
 
   for (let i = 1; i <= TOTAL_TRADES; i++) {
     // Stop trading if market closes mid-session (live only)
@@ -353,8 +410,11 @@ async function main() {
     }
 
     const ts = new Date().toISOString();
-    const candles = await getCandles(SYMBOL, 30);
-    const { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist } = getSignal(candles);
+    const [candles, candles5m] = await Promise.all([
+      getCandles(SYMBOL, 30),
+      getCandles5m(SYMBOL, 25),
+    ]);
+    const { signal, last, ema8, rsi3, vwap, atr, stopLoss, takeProfit, stopDist, volActive, htfTrend, filterReason } = getSignal(candles, candles5m);
     const bals = await getBalances();
 
     console.log(`[${i}/${TOTAL_TRADES}] ${ts}`);
@@ -362,7 +422,10 @@ async function main() {
       `  Price: $${last.toFixed(4)} | EMA8: ${ema8.toFixed(4)} | RSI3: ${rsi3.toFixed(1)} | VWAP: ${vwap.toFixed(4)} | ATR: ${atr.toFixed(4)}`,
     );
     console.log(
-      `  USDT: $${bals.usdt.toFixed(4)} | XRP: ${bals.xrp.toFixed(4)} | Signal: ${signal.toUpperCase()}`,
+      `  HTF: ${htfTrend.toUpperCase()} | Vol: ${volActive ? "✅ active" : "⚠️ low"} | Signal: ${signal.toUpperCase()}${filterReason ? ` (${filterReason})` : ""}`,
+    );
+    console.log(
+      `  USDT: $${bals.usdt.toFixed(4)} | XRP: ${bals.xrp.toFixed(4)}`,
     );
 
     let side, size, label;
@@ -463,6 +526,9 @@ async function main() {
         console.log(`  ✅ BUY PLACED — ${orderId}`);
         lastBuyXrpQty = DEMO_MODE ? parseFloat(size) : await getOrderFill(orderId);
         lastBuyPrice = last;
+        const buyFee = last * lastBuyXrpQty * (FEE_BUY + SLIPPAGE);
+        lastBuyCost = last * lastBuyXrpQty + buyFee;
+        totalFees += buyFee;
         trailingStop = stopLoss;
         highSinceEntry = last;
         entryTakeProfit = takeProfit;
@@ -482,15 +548,21 @@ async function main() {
       entry.orderPlaced = ok;
 
       if (ok) {
-        const tradePnl = (last - lastBuyPrice) * soldQty;
+        const sellFee = last * soldQty * (FEE_SELL + SLIPPAGE);
+        totalFees += sellFee;
+        const grossPnl = (last * soldQty) - lastBuyCost;
+        const tradePnl = grossPnl - sellFee;
         totalPnl += tradePnl;
         entry.exitPrice = last;
+        entry.grossPnl = +grossPnl.toFixed(4);
+        entry.fees = +(buyFee + sellFee).toFixed(4);
         entry.pnl = +tradePnl.toFixed(4);
         console.log(
-          `  ✅ SELL PLACED — ${entry.orderId} (${soldQty.toFixed(4)} XRP) | Trade P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`,
+          `  ✅ SELL PLACED — ${entry.orderId} (${soldQty.toFixed(4)} XRP) | Gross: ${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(4)} | Fees: -$${sellFee.toFixed(4)} | Net P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`,
         );
         lastBuyXrpQty = 0;
         lastBuyPrice = 0;
+        lastBuyCost = 0;
         trailingStop = 0;
       } else {
         console.log(`  ❌ Sell failed: ${res.msg}`);
@@ -525,18 +597,35 @@ async function main() {
   const final = await getBalances();
   const price = await getPrice(SYMBOL);
   const totalValue = final.usdt + final.xrp * price;
-  console.log(`\n📊 Final:`);
-  console.log(`  USDT: $${final.usdt.toFixed(4)}`);
-  console.log(
-    `  XRP: ${final.xrp.toFixed(4)} (≈$${(final.xrp * price).toFixed(4)})`,
-  );
-  console.log(`  Total est. value: $${totalValue.toFixed(4)}`);
+  const startValue = DEMO_MODE ? DEMO_BALANCE : totalValue - totalPnl;
+  const returnPct = ((totalValue - startValue) / startValue * 100).toFixed(2);
 
-  const placed = log.filter((e) => e.orderPlaced).length;
-  const wins = log.filter((e) => e.pnl > 0).length;
-  const losses = log.filter((e) => e.pnl < 0).length;
-  console.log(`\n✅ Done — ${placed}/${TOTAL_TRADES} orders placed.`);
-  console.log(`  Wins: ${wins} | Losses: ${losses} | Session P&L: ${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(4)}\n`);
+  const trades = log.filter((e) => e.pnl !== undefined);
+  const wins = trades.filter((e) => e.pnl > 0);
+  const losses = trades.filter((e) => e.pnl < 0);
+  const winRate = trades.length > 0 ? (wins.length / trades.length * 100).toFixed(1) : "0.0";
+  const avgWin = wins.length > 0 ? (wins.reduce((s, t) => s + t.pnl, 0) / wins.length).toFixed(4) : "0";
+  const avgLoss = losses.length > 0 ? (losses.reduce((s, t) => s + t.pnl, 0) / losses.length).toFixed(4) : "0";
+  const bestTrade = trades.length > 0 ? Math.max(...trades.map((t) => t.pnl)).toFixed(4) : "0";
+  const worstTrade = trades.length > 0 ? Math.min(...trades.map((t) => t.pnl)).toFixed(4) : "0";
+
+  console.log(`\n${"═".repeat(50)}`);
+  console.log(`  📊 SESSION ANALYTICS`);
+  console.log(`${"═".repeat(50)}`);
+  console.log(`  Mode         : ${DEMO_MODE ? "DEMO" : "LIVE"}`);
+  console.log(`  Start Balance: $${startValue.toFixed(2)}`);
+  console.log(`  End Value    : $${totalValue.toFixed(2)}`);
+  console.log(`  Return       : ${returnPct >= 0 ? "+" : ""}${returnPct}%`);
+  console.log(`  Net P&L      : ${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(4)}`);
+  console.log(`  Total Fees   : -$${totalFees.toFixed(4)}`);
+  console.log(`${"─".repeat(50)}`);
+  console.log(`  Trades       : ${trades.length} (${wins.length}W / ${losses.length}L)`);
+  console.log(`  Win Rate     : ${winRate}%`);
+  console.log(`  Avg Win      : +$${avgWin}`);
+  console.log(`  Avg Loss     : $${avgLoss}`);
+  console.log(`  Best Trade   : +$${bestTrade}`);
+  console.log(`  Worst Trade  : $${worstTrade}`);
+  console.log(`${"═".repeat(50)}\n`);
 
   const existing = existsSync("safety-check-log.json")
     ? JSON.parse(readFileSync("safety-check-log.json", "utf8"))
