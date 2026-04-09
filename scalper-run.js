@@ -291,7 +291,9 @@ async function main() {
   let holding = "usdt";
   let lastBuyXrpQty = 0;
   let lastBuyPrice = 0;
-  let trailingStop = 0;   // tracks highest price seen since buy
+  let trailingStop = 0;
+  let highSinceEntry = 0;   // highest price seen since last buy
+  let entryTakeProfit = 0;  // TP locked at entry price
   let totalPnl = 0;
 
   for (let i = 1; i <= TOTAL_TRADES; i++) {
@@ -324,13 +326,14 @@ async function main() {
       orderPlaced: false,
     };
 
-    // Update trailing stop if holding XRP
-    if (holding === "xrp" && last > trailingStop + (trailingStop * 0.001)) {
+    // Ratchet trailing stop only when price makes a new high since entry
+    if (holding === "xrp" && last > highSinceEntry) {
+      highSinceEntry = last;
       trailingStop = last - (atr * ATR_MULTIPLIER);
-      console.log(`  📈 Trailing stop updated → $${trailingStop.toFixed(4)}`);
+      console.log(`  📈 New high $${last.toFixed(4)} — trailing stop → $${trailingStop.toFixed(4)}`);
     }
 
-    // Force sell if trailing stop or take-profit hit
+    // Force sell if trailing stop or locked entry take-profit hit
     if (holding === "xrp" && lastBuyXrpQty > 0) {
       if (last <= trailingStop) {
         console.log(`  🛑 TRAILING STOP HIT @ $${last.toFixed(4)} — forcing sell`);
@@ -340,12 +343,12 @@ async function main() {
           totalPnl += tradePnl;
           log.push({ tick: i, timestamp: ts, price: last, signal: "trailing-stop", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
           console.log(`  💰 Sold ${soldQty} XRP | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
-          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; holding = "usdt";
+          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
         continue;
       }
-      if (last >= takeProfit) {
+      if (last >= entryTakeProfit) {
         console.log(`  🎯 TAKE PROFIT HIT @ $${last.toFixed(4)} — forcing sell`);
         const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
         if (ok) {
@@ -353,7 +356,7 @@ async function main() {
           totalPnl += tradePnl;
           log.push({ tick: i, timestamp: ts, price: last, signal: "take-profit", side: "sell", orderPlaced: true, exitPrice: last, pnl: +tradePnl.toFixed(4) });
           console.log(`  💰 Sold ${soldQty} XRP | P&L: +$${tradePnl.toFixed(4)}`);
-          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; holding = "usdt";
+          lastBuyXrpQty = 0; lastBuyPrice = 0; trailingStop = 0; highSinceEntry = 0; entryTakeProfit = 0; holding = "usdt";
         }
         if (i < TOTAL_TRADES) await new Promise((r) => setTimeout(r, INTERVAL_MS));
         continue;
@@ -403,9 +406,11 @@ async function main() {
 
       if (ok) {
         console.log(`  ✅ BUY PLACED — ${orderId}`);
-        lastBuyXrpQty = await getOrderFill(orderId);
+        lastBuyXrpQty = DEMO_MODE ? parseFloat(size) : await getOrderFill(orderId);
         lastBuyPrice = last;
         trailingStop = stopLoss;
+        highSinceEntry = last;
+        entryTakeProfit = takeProfit;
         console.log(
           `  📦 Filled: ${lastBuyXrpQty.toFixed(4)} XRP @ $${last.toFixed(4)} — SL: $${stopLoss.toFixed(4)} | TP: $${takeProfit.toFixed(4)}`,
         );
@@ -445,6 +450,20 @@ async function main() {
         side === "buy" ? Math.max(INTERVAL_MS - 5000, 4000) : INTERVAL_MS;
       console.log(`  ⏱  Next in ${waitMs / 1000}s...\n`);
       await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+
+  // Liquidate any open position at end of session
+  if (holding === "xrp" && lastBuyXrpQty > 0) {
+    const exitPrice = await getPrice(SYMBOL);
+    console.log(`\n⚠️  Session ended with open position — liquidating ${lastBuyXrpQty.toFixed(4)} XRP @ $${exitPrice.toFixed(4)}`);
+    const { ok, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, exitPrice);
+    if (ok) {
+      const tradePnl = (exitPrice - lastBuyPrice) * soldQty;
+      totalPnl += tradePnl;
+      console.log(`  💰 Liquidated | P&L: ${tradePnl >= 0 ? "+" : ""}$${tradePnl.toFixed(4)}`);
+    } else {
+      console.log(`  ❌ Liquidation failed — close manually`);
     }
   }
 
