@@ -35,18 +35,16 @@ const MARKET_OPEN_H = 9, MARKET_OPEN_M = 15;   // 9:15 AM IST
 const MARKET_CLOSE_H = 15, MARKET_CLOSE_M = 30; // 3:30 PM IST
 
 function getISTTime() {
-  // IST = UTC + 5:30
-  const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  return new Date(now.getTime() + istOffset - (now.getTimezoneOffset() * 60000));
+  // IST = UTC + 5:30. Always add to UTC ms so result is timezone-independent.
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
 }
 
 function isMarketOpen() {
   const ist = getISTTime();
-  const day = ist.getDay(); // 0=Sun, 6=Sat
+  const day = ist.getUTCDay(); // 0=Sun, 6=Sat
   if (day === 0 || day === 6) return false; // weekend
 
-  const h = ist.getHours(), m = ist.getMinutes();
+  const h = ist.getUTCHours(), m = ist.getUTCMinutes();
   const nowMins = h * 60 + m;
   const openMins = MARKET_OPEN_H * 60 + MARKET_OPEN_M;   // 555
   const closeMins = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M; // 930
@@ -55,8 +53,8 @@ function isMarketOpen() {
 
 function getMarketStatusMsg() {
   const ist = getISTTime();
-  const day = ist.getDay();
-  const h = ist.getHours(), m = ist.getMinutes();
+  const day = ist.getUTCDay();
+  const h = ist.getUTCHours(), m = ist.getUTCMinutes();
   const pad = (n) => String(n).padStart(2, "0");
   const timeStr = `${pad(h)}:${pad(m)} IST`;
   if (day === 0 || day === 6) return `Market CLOSED — weekend (${timeStr})`;
