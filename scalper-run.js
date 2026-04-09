@@ -23,6 +23,11 @@ const RR_RATIO = 2;          // Take-profit = 2× stop distance (2:1 R:R)
 const ATR_PERIOD = 14;       // ATR period for stop placement
 const ATR_MULTIPLIER = 1.5;  // Stop = 1.5× ATR from entry
 
+// ── DEMO MODE ───────────────────────────────────────────────────
+// Set to false and add your AngelOne API key to .env to go live
+const DEMO_MODE = true;
+const DEMO_BALANCE = 10000; // $10,000 virtual starting balance
+
 // ── BitGet helpers ──────────────────────────────────────────────
 function sign(ts, method, path, body = "") {
   return createHmac("sha256", SECRET_KEY)
@@ -61,6 +66,35 @@ function request(method, path, body = null) {
   });
 }
 
+// ── Demo paper trading state ────────────────────────────────────
+const demo = {
+  usdt: DEMO_BALANCE,
+  xrp: 0,
+  orderCount: 0,
+};
+
+function demoBuy(price, size) {
+  const cost = price * parseFloat(size);
+  if (cost > demo.usdt) return { code: "ERR", msg: "Insufficient demo balance" };
+  demo.usdt -= cost;
+  demo.xrp += parseFloat(size);
+  demo.orderCount++;
+  return { code: "00000", data: { orderId: `DEMO-${demo.orderCount}` } };
+}
+
+function demoSell(size) {
+  const qty = parseFloat(size);
+  if (qty > demo.xrp) return { code: "ERR", msg: "Insufficient demo XRP" };
+  // price credited at sell time in main loop
+  demo.xrp -= qty;
+  demo.orderCount++;
+  return { code: "00000", data: { orderId: `DEMO-${demo.orderCount}` } };
+}
+
+function demoGetBalances() {
+  return { usdt: demo.usdt, xrp: demo.xrp };
+}
+
 // ── Market data ─────────────────────────────────────────────────
 async function getCandles(symbol, limit = 30) {
   // 1-minute candles from BitGet
@@ -88,6 +122,9 @@ async function getPrice(symbol) {
 }
 
 async function getBalances() {
+  if (DEMO_MODE) return demoGetBalances();
+  // 🔴 LIVE: swap this for AngelOne when ready
+  // import { getFunds } from './src/core/broker.js' and map to { usdt, xrp }
   const res = await request("GET", "/api/v2/spot/account/assets");
   const usdt = res.data?.find((a) => a.coin === "USDT");
   const xrp = res.data?.find((a) => a.coin === "XRP");
@@ -171,7 +208,12 @@ function getSignal(candles) {
 }
 
 // ── Order helpers ───────────────────────────────────────────────
-async function placeOrder(side, size) {
+async function placeOrder(side, size, price = 0) {
+  if (DEMO_MODE) {
+    return side === "buy" ? demoBuy(price, size) : demoSell(size);
+  }
+  // 🔴 LIVE: swap this for AngelOne when ready
+  // import { placeOrder as angelPlaceOrder } from './src/core/broker.js'
   const body = {
     symbol: SYMBOL,
     side,
@@ -198,7 +240,16 @@ async function getOrderFill(orderId) {
 // BitGet locks newly purchased assets against immediate resale (anti-wash-trading).
 // This retries the sell, parsing the actually-available amount from the error
 // message until the lock lifts or we time out.
-async function placeSellWithRetry(qty, maxRetries = 12, retryDelayMs = 3000) {
+async function placeSellWithRetry(qty, maxRetries = 12, retryDelayMs = 3000, price = 0) {
+  if (DEMO_MODE) {
+    const size = (Math.floor(qty * 10000) / 10000).toFixed(4);
+    const res = demoSell(size);
+    if (res.code === "00000") {
+      demo.usdt += price * parseFloat(size); // credit sale proceeds
+      return { ok: true, res, soldQty: parseFloat(size) };
+    }
+    return { ok: false, res, soldQty: 0 };
+  }
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const size = (Math.floor(qty * 10000) / 10000).toFixed(4);
     const res = await placeOrder("sell", size);
@@ -229,7 +280,9 @@ async function placeSellWithRetry(qty, maxRetries = 12, retryDelayMs = 3000) {
 
 // ── Main loop ───────────────────────────────────────────────────
 async function main() {
+  const modeLabel = DEMO_MODE ? `📝 DEMO MODE — $${DEMO_BALANCE.toLocaleString()} virtual balance` : "🔴 LIVE MODE — real money";
   console.log(`\n🤖 XRP Scalper — VWAP + RSI(3) + EMA(8)`);
+  console.log(`Mode: ${modeLabel}`);
   console.log(
     `Symbol: ${SYMBOL} | ${TOTAL_TRADES} trades × ${INTERVAL_MS / 1000}s\n`,
   );
@@ -281,7 +334,7 @@ async function main() {
     if (holding === "xrp" && lastBuyXrpQty > 0) {
       if (last <= trailingStop) {
         console.log(`  🛑 TRAILING STOP HIT @ $${last.toFixed(4)} — forcing sell`);
-        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty);
+        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
         if (ok) {
           const tradePnl = (last - lastBuyPrice) * soldQty;
           totalPnl += tradePnl;
@@ -294,7 +347,7 @@ async function main() {
       }
       if (last >= takeProfit) {
         console.log(`  🎯 TAKE PROFIT HIT @ $${last.toFixed(4)} — forcing sell`);
-        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty);
+        const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
         if (ok) {
           const tradePnl = (last - lastBuyPrice) * soldQty;
           totalPnl += tradePnl;
@@ -342,7 +395,7 @@ async function main() {
     entry.size = size;
 
     if (side === "buy") {
-      const res = await placeOrder("buy", size);
+      const res = await placeOrder("buy", size, last);
       const ok = res.code === "00000";
       const orderId = res.data?.orderId;
       entry.orderId = orderId || res.msg;
@@ -364,7 +417,7 @@ async function main() {
       }
     } else {
       // Use retry loop — handles BitGet's anti-wash-trading lock automatically
-      const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty);
+      const { ok, res, soldQty } = await placeSellWithRetry(lastBuyXrpQty, 12, 3000, last);
       entry.orderId = res.data?.orderId || res.msg;
       entry.orderPlaced = ok;
 
