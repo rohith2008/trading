@@ -1,0 +1,11 @@
+{
+	"nodes":[
+		{"id":"fe147ec650083fc5","x":40,"y":-120,"width":400,"height":400,"type":"file","file":"brain/lessons.json"},
+		{"id":"8c352c8917dc6f15","x":520,"y":-120,"width":400,"height":400,"type":"file","file":"brain/mistakes.json"},
+		{"id":"087c61fce7f6fe71","x":1000,"y":-120,"width":400,"height":400,"type":"file","file":"brain/patterns.json"},
+		{"id":"d284632047cd816e","x":-440,"y":-120,"width":400,"height":400,"type":"file","file":"brain/market_notes.json"},
+		{"id":"894406281e0b6e75","x":1480,"y":-120,"width":400,"height":400,"type":"file","file":"brain/performance.json"},
+		{"id":"28255dea0348669d","x":520,"y":-640,"width":400,"height":400,"type":"file","file":"agents/performance-analyst.md"}
+	],
+	"edges":[]
+}

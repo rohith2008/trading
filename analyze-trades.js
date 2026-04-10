@@ -56,7 +56,7 @@ console.log(`\n🤖 Analyzing ${completed.length} trades with Claude...\n`);
 function claudeRequest(prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet-latest",
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });

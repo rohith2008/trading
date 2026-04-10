@@ -1,0 +1,18 @@
+---
+source_file: "C:\Users\Rohith\tradingview-mcp-jackson\src\core\morning.js"
+type: "code"
+community: "Community 19"
+location: "L17"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Community_19
+---
+
+# loadRules()
+
+## Connections
+- [[morning.js]] - `contains` [EXTRACTED]
+- [[runBrief()]] - `calls` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Community_19

@@ -58,13 +58,18 @@ if not exist "%~dp0..\trades" mkdir "%~dp0..\trades"
 echo      Done.
 echo.
 
-:: ── Step 4: Run first Excel update ──────────────────────────────────────────
-echo [4/5] Generating trade journal Excel...
+:: ── Step 4: Brain briefing ───────────────────────────────────────────────────
+echo [4/5] Running brain briefing (trade history + lessons)...
+node "%~dp0brain_briefing.js"
+echo.
+
+:: ── Step 4b: Run first Excel update ──────────────────────────────────────────
+echo [4b/5] Generating trade journal Excel...
 node "%~dp0update_excel.js"
 if %errorlevel% equ 0 (
     echo      Excel created: trades\trade-journal.xlsx
 ) else (
-    echo      Excel generation failed — check Node.js is installed.
+    echo      Excel generation failed — check TradingView is open.
 )
 echo.
 

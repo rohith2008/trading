@@ -1,37 +1,36 @@
 import CDP from 'chrome-remote-interface';
 
-let client = null;
-let targetInfo = null;
-const CDP_HOST = 'localhost';
-const CDP_PORT = 9222;
-const MAX_RETRIES = 5;
-const BASE_DELAY = 500;
+// ── Config ───────────────────────────────────────────────────────────────────
+const CDP_HOST            = 'localhost';
+const CDP_PORT            = 9222;
+const MAX_RETRIES         = 5;
+const BASE_DELAY_MS       = 500;
+const KEEPALIVE_INTERVAL  = 3 * 60 * 1000;  // ping every 3 min to prevent idle disconnect
 
-// Known direct API paths discovered via live probing (see PROBE_RESULTS.md)
-const KNOWN_PATHS = {
-  chartApi: 'window.TradingViewApi._activeChartWidgetWV.value()',
-  chartWidgetCollection: 'window.TradingViewApi._chartWidgetCollection',
-  bottomWidgetBar: 'window.TradingView.bottomWidgetBar',
-  replayApi: 'window.TradingViewApi._replayApi',
-  alertService: 'window.TradingViewApi._alertService',
-  chartApiInstance: 'window.ChartApiInstance',
-  mainSeriesBars: 'window.TradingViewApi._activeChartWidgetWV.value()._chartWidget.model().mainSeries().bars()',
-  // Phase 1: Strategy data — model().dataSources() → find strategy → .performance().value(), .ordersData(), .reportData()
-  strategyStudy: 'chart._chartWidget.model().model().dataSources()',
-  // Phase 2: Layouts — getSavedCharts(cb), loadChartFromServer(id)
-  layoutManager: 'window.TradingViewApi.getSavedCharts',
-  // Phase 5: Symbol search — searchSymbols(query) returns Promise
-  symbolSearchApi: 'window.TradingViewApi.searchSymbols',
-  // Phase 6: Pine scripts — REST API at pine-facade.tradingview.com/pine-facade/list/?filter=saved
-  pineFacadeApi: 'https://pine-facade.tradingview.com/pine-facade',
+// ── State ────────────────────────────────────────────────────────────────────
+let client         = null;
+let targetInfo     = null;
+let keepaliveTimer = null;
+
+// ── Known TradingView API paths (discovered via live probing) ─────────────────
+export const KNOWN_PATHS = {
+  chartApi:             'window.TradingViewApi._activeChartWidgetWV.value()',
+  chartWidgetCollection:'window.TradingViewApi._chartWidgetCollection',
+  bottomWidgetBar:      'window.TradingView.bottomWidgetBar',
+  replayApi:            'window.TradingViewApi._replayApi',
+  alertService:         'window.TradingViewApi._alertService',
+  chartApiInstance:     'window.ChartApiInstance',
+  mainSeriesBars:       'window.TradingViewApi._activeChartWidgetWV.value()._chartWidget.model().mainSeries().bars()',
+  strategyStudy:        'chart._chartWidget.model().model().dataSources()',
+  layoutManager:        'window.TradingViewApi.getSavedCharts',
+  symbolSearchApi:      'window.TradingViewApi.searchSymbols',
+  pineFacadeApi:        'https://pine-facade.tradingview.com/pine-facade',
 };
 
-export { KNOWN_PATHS };
-
+// ── Connection ───────────────────────────────────────────────────────────────
 export async function getClient() {
   if (client) {
     try {
-      // Quick liveness check
       await client.Runtime.evaluate({ expression: '1', returnByValue: true });
       return client;
     } catch {
@@ -47,49 +46,59 @@ export async function connect() {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const target = await findChartTarget();
-      if (!target) {
-        throw new Error('No TradingView chart target found. Is TradingView open with a chart?');
-      }
+      if (!target) throw new Error('No TradingView chart target found. Is TradingView open with a chart?');
       targetInfo = target;
-      client = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
+      client     = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
 
-      // Enable required domains
       await client.Runtime.enable();
       await client.Page.enable();
       await client.DOM.enable();
 
+      startKeepalive();
       return client;
     } catch (err) {
       lastError = err;
-      const delay = Math.min(BASE_DELAY * Math.pow(2, attempt), 30000);
-      await new Promise(r => setTimeout(r, delay));
+      const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 30_000);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw new Error(`CDP connection failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
 }
 
 async function findChartTarget() {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
-  // Prefer targets with tradingview.com/chart in the URL
-  return targets.find(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))
-    || targets.find(t => t.type === 'page' && /tradingview/i.test(t.url))
-    || null;
+  const targets = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`).then((r) => r.json());
+  return (
+    targets.find((t) => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))   ||
+    targets.find((t) => t.type === 'page' && /tradingview/i.test(t.url))               ||
+    targets.find((t) => t.type === 'page' && /tradingview/i.test(t.title || ''))       ||
+    targets.find((t) => t.type === 'page')                                              ||
+    null
+  );
 }
 
-export async function getTargetInfo() {
-  if (!targetInfo) {
-    await getClient();
-  }
-  return targetInfo;
+// ── Keepalive ─────────────────────────────────────────────────────────────────
+function startKeepalive() {
+  if (keepaliveTimer) clearInterval(keepaliveTimer);
+  keepaliveTimer = setInterval(async () => {
+    if (!client) { clearInterval(keepaliveTimer); keepaliveTimer = null; return; }
+    try {
+      await client.Runtime.evaluate({ expression: '1', returnByValue: true });
+    } catch {
+      // Connection dropped — clear so getClient() reconnects on next call
+      client = null; targetInfo = null;
+      clearInterval(keepaliveTimer); keepaliveTimer = null;
+    }
+  }, KEEPALIVE_INTERVAL);
+  keepaliveTimer.unref?.();  // don't block process exit
 }
 
+// ── Evaluate ──────────────────────────────────────────────────────────────────
 export async function evaluate(expression, opts = {}) {
-  const c = await getClient();
+  const c      = await getClient();
   const result = await c.Runtime.evaluate({
     expression,
-    returnByValue: true,
-    awaitPromise: opts.awaitPromise ?? false,
+    returnByValue:  true,
+    awaitPromise:   opts.awaitPromise ?? false,
     ...opts,
   });
   if (result.exceptionDetails) {
@@ -105,42 +114,29 @@ export async function evaluateAsync(expression) {
   return evaluate(expression, { awaitPromise: true });
 }
 
+// ── Disconnect ────────────────────────────────────────────────────────────────
 export async function disconnect() {
+  if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
   if (client) {
     try { await client.close(); } catch {}
-    client = null;
-    targetInfo = null;
+    client = null; targetInfo = null;
   }
 }
 
-// --- Direct API path helpers ---
-// Each returns the STRING expression path after verifying it exists.
-// Callers use the returned string in their own evaluate() calls.
+// ── Convenience path helpers ──────────────────────────────────────────────────
+export async function getTargetInfo() {
+  if (!targetInfo) await getClient();
+  return targetInfo;
+}
 
 async function verifyAndReturn(path, name) {
   const exists = await evaluate(`typeof (${path}) !== 'undefined' && (${path}) !== null`);
-  if (!exists) {
-    throw new Error(`${name} not available at ${path}`);
-  }
+  if (!exists) throw new Error(`${name} not available at ${path}`);
   return path;
 }
 
-export async function getChartApi() {
-  return verifyAndReturn(KNOWN_PATHS.chartApi, 'Chart API');
-}
-
-export async function getChartCollection() {
-  return verifyAndReturn(KNOWN_PATHS.chartWidgetCollection, 'Chart Widget Collection');
-}
-
-export async function getBottomBar() {
-  return verifyAndReturn(KNOWN_PATHS.bottomWidgetBar, 'Bottom Widget Bar');
-}
-
-export async function getReplayApi() {
-  return verifyAndReturn(KNOWN_PATHS.replayApi, 'Replay API');
-}
-
-export async function getMainSeriesBars() {
-  return verifyAndReturn(KNOWN_PATHS.mainSeriesBars, 'Main Series Bars');
-}
+export const getChartApi        = () => verifyAndReturn(KNOWN_PATHS.chartApi,           'Chart API');
+export const getChartCollection = () => verifyAndReturn(KNOWN_PATHS.chartWidgetCollection, 'Chart Widget Collection');
+export const getBottomBar       = () => verifyAndReturn(KNOWN_PATHS.bottomWidgetBar,    'Bottom Widget Bar');
+export const getReplayApi       = () => verifyAndReturn(KNOWN_PATHS.replayApi,          'Replay API');
+export const getMainSeriesBars  = () => verifyAndReturn(KNOWN_PATHS.mainSeriesBars,     'Main Series Bars');

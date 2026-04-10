@@ -1,5 +1,5 @@
 {
-  "_readme": "Running performance stats. Updated after every closed trade.",
+  "_readme": "Running performance stats. Updated after every closed trade. Two accounts: NSE stocks + Forex.",
   "summary": {
     "total_trades": 1,
     "open_trades": 0,
@@ -14,6 +14,21 @@
     "total_pnl_inr": 11.89,
     "current_capital_inr": 10011.89,
     "peak_capital_inr": 10011.89,
+    "max_drawdown_pct": 0
+  },
+  "forex_summary": {
+    "total_trades": 0,
+    "open_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate_pct": null,
+    "avg_win_pct": null,
+    "avg_loss_pct": null,
+    "best_trade": null,
+    "worst_trade": null,
+    "total_pnl_inr": 0,
+    "current_capital_inr": 10000,
+    "peak_capital_inr": 10000,
     "max_drawdown_pct": 0
   },
   "by_setup": {},

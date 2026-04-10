@@ -43,12 +43,28 @@ if (!trade) { console.error(`Trade #${tradeId} not found.`); process.exit(1); }
 if (trade.status !== 'OPEN') { console.error(`Trade #${tradeId} is already closed (${trade.status}).`); process.exit(1); }
 
 // ── Calculate P&L ──────────────────────────────────────────────────────────
+const isForex = trade.market === 'FOREX';
 const direction = trade.action === 'BUY' ? 1 : -1;
-const pnl = (exitPrice - trade.entry) * trade.shares * direction;
-const pnlPct = ((exitPrice - trade.entry) / trade.entry * 100 * direction);
+
+let pnl, pnlPct;
+if (isForex) {
+  // Forex P&L: price_move × units × USD/INR rate (for USD-quoted pairs)
+  // For XAU/USD or pairs quoted in USD: pnl_usd = (exit - entry) * units * direction
+  // Convert to INR using the stored rate
+  const units = trade.units || (trade.lot_size * 100000);
+  const usdInr = journal.forex_account?.usd_inr_rate || 93.2;
+  const pnlUsd = (exitPrice - trade.entry) * units * direction;
+  pnl = Math.round(pnlUsd * usdInr * 100) / 100;
+  // pnlPct based on margin_used
+  pnlPct = Math.round((pnl / (trade.margin_used || 1)) * 10000) / 100;
+} else {
+  pnl = (exitPrice - trade.entry) * trade.shares * direction;
+  pnlPct = ((exitPrice - trade.entry) / trade.entry * 100 * direction);
+}
+
 const status = outcome === 'win' ? 'WIN' : outcome === 'loss' ? 'LOSS' : 'BREAKEVEN';
-const hitTarget = exitPrice >= trade.target && trade.action === 'BUY';
-const hitStop = exitPrice <= trade.stop_loss && trade.action === 'BUY';
+const hitTarget = direction === 1 ? exitPrice >= trade.target : exitPrice <= trade.target;
+const hitStop   = direction === 1 ? exitPrice <= trade.stop_loss : exitPrice >= trade.stop_loss;
 
 // ── Update trade record ─────────────────────────────────────────────────────
 trade.status = status;
@@ -125,35 +141,55 @@ pattern.win_rate_pct = Math.round((pattern.wins / pattern.trades) * 100);
 pattern.avg_pnl_pct = Math.round((pattern.total_pnl_pct / pattern.trades) * 100) / 100;
 
 // ── Update performance stats ────────────────────────────────────────────────
-const s = perf.summary;
-s.total_trades++;
-s.open_trades = Math.max(0, s.open_trades - 1);
-if (status === 'WIN') s.wins++;
-if (status === 'LOSS') s.losses++;
-const closedTrades = journal.trades.filter(t => t.status !== 'OPEN' && t.pnl !== null);
-s.win_rate_pct = s.total_trades > 0 ? Math.round((s.wins / s.total_trades) * 100) : null;
-const wins = closedTrades.filter(t => t.status === 'WIN');
-const losses = closedTrades.filter(t => t.status === 'LOSS');
-s.avg_win_pct = wins.length ? Math.round(wins.reduce((a,t) => a + t.pnl_pct, 0) / wins.length * 100) / 100 : null;
-s.avg_loss_pct = losses.length ? Math.round(losses.reduce((a,t) => a + t.pnl_pct, 0) / losses.length * 100) / 100 : null;
-s.total_pnl_inr = Math.round(closedTrades.reduce((a,t) => a + (t.pnl || 0), 0) * 100) / 100;
-s.current_capital_inr = Math.round((journal.account.starting_capital + s.total_pnl_inr) * 100) / 100;
-s.peak_capital_inr = Math.max(s.peak_capital_inr, s.current_capital_inr);
-
-// Update by-symbol stats
-if (!perf.by_symbol[trade.symbol]) perf.by_symbol[trade.symbol] = { trades: 0, wins: 0, total_pnl_pct: 0 };
-perf.by_symbol[trade.symbol].trades++;
-if (status === 'WIN') perf.by_symbol[trade.symbol].wins++;
-perf.by_symbol[trade.symbol].total_pnl_pct += pnlPct;
-
-s.best_trade = wins.sort((a,b) => b.pnl_pct - a.pnl_pct)[0]?.symbol + ' +' + wins[0]?.pnl_pct + '%' || null;
-s.worst_trade = losses.sort((a,b) => a.pnl_pct - b.pnl_pct)[0]?.symbol + ' ' + losses[0]?.pnl_pct + '%' || null;
+if (isForex) {
+  // Update forex summary
+  const fs = perf.forex_summary;
+  fs.total_trades++;
+  fs.open_trades = Math.max(0, fs.open_trades - 1);
+  if (status === 'WIN') fs.wins++;
+  if (status === 'LOSS') fs.losses++;
+  const fxClosed = journal.trades.filter(t => t.market === 'FOREX' && t.status !== 'OPEN' && t.pnl !== null);
+  fs.win_rate_pct = fs.total_trades > 0 ? Math.round((fs.wins / fs.total_trades) * 100) : null;
+  const fxWins = fxClosed.filter(t => t.status === 'WIN');
+  const fxLosses = fxClosed.filter(t => t.status === 'LOSS');
+  fs.avg_win_pct = fxWins.length ? Math.round(fxWins.reduce((a,t) => a + t.pnl_pct, 0) / fxWins.length * 100) / 100 : null;
+  fs.avg_loss_pct = fxLosses.length ? Math.round(fxLosses.reduce((a,t) => a + t.pnl_pct, 0) / fxLosses.length * 100) / 100 : null;
+  fs.total_pnl_inr = Math.round(fxClosed.reduce((a,t) => a + (t.pnl || 0), 0) * 100) / 100;
+  fs.current_capital_inr = Math.round((journal.forex_account.starting_capital + fs.total_pnl_inr) * 100) / 100;
+  fs.peak_capital_inr = Math.max(fs.peak_capital_inr, fs.current_capital_inr);
+  if (fxWins.length) fs.best_trade = fxWins.sort((a,b) => b.pnl_pct - a.pnl_pct)[0]?.pair + ' +' + fxWins[0]?.pnl_pct + '%';
+  if (fxLosses.length) fs.worst_trade = fxLosses.sort((a,b) => a.pnl_pct - b.pnl_pct)[0]?.pair + ' ' + fxLosses[0]?.pnl_pct + '%';
+  journal.forex_account.current_capital = fs.current_capital_inr;
+} else {
+  const s = perf.summary;
+  s.total_trades++;
+  s.open_trades = Math.max(0, s.open_trades - 1);
+  if (status === 'WIN') s.wins++;
+  if (status === 'LOSS') s.losses++;
+  const closedTrades = journal.trades.filter(t => (t.market || 'NSE') !== 'FOREX' && t.status !== 'OPEN' && t.pnl !== null);
+  s.win_rate_pct = s.total_trades > 0 ? Math.round((s.wins / s.total_trades) * 100) : null;
+  const wins = closedTrades.filter(t => t.status === 'WIN');
+  const losses = closedTrades.filter(t => t.status === 'LOSS');
+  s.avg_win_pct = wins.length ? Math.round(wins.reduce((a,t) => a + t.pnl_pct, 0) / wins.length * 100) / 100 : null;
+  s.avg_loss_pct = losses.length ? Math.round(losses.reduce((a,t) => a + t.pnl_pct, 0) / losses.length * 100) / 100 : null;
+  s.total_pnl_inr = Math.round(closedTrades.reduce((a,t) => a + (t.pnl || 0), 0) * 100) / 100;
+  s.current_capital_inr = Math.round((journal.account.starting_capital + s.total_pnl_inr) * 100) / 100;
+  s.peak_capital_inr = Math.max(s.peak_capital_inr, s.current_capital_inr);
+  if (!perf.by_symbol[trade.symbol]) perf.by_symbol[trade.symbol] = { trades: 0, wins: 0, total_pnl_pct: 0 };
+  perf.by_symbol[trade.symbol].trades++;
+  if (status === 'WIN') perf.by_symbol[trade.symbol].wins++;
+  perf.by_symbol[trade.symbol].total_pnl_pct += pnlPct;
+  s.best_trade = wins.sort((a,b) => b.pnl_pct - a.pnl_pct)[0]?.symbol + ' +' + wins[0]?.pnl_pct + '%' || null;
+  s.worst_trade = losses.sort((a,b) => a.pnl_pct - b.pnl_pct)[0]?.symbol + ' ' + losses[0]?.pnl_pct + '%' || null;
+  journal.account.current_capital = perf.summary.current_capital_inr;
+}
 
 // ── Add to journal log ──────────────────────────────────────────────────────
-journal.account.current_capital = s.current_capital_inr;
+const tradeLabel = isForex ? `${trade.pair} [FOREX]` : trade.symbol;
+const priceSymbol = isForex ? '' : '₹';
 journal.log.push({
   date: trade.exit_date,
-  note: `CLOSED Trade #${tradeId} ${trade.symbol} @ ₹${exitPrice} | ${status} | P&L: ₹${pnl.toFixed(2)} (${pnlPct.toFixed(2)}%) | ${reason}`,
+  note: `CLOSED Trade #${tradeId} ${tradeLabel} @ ${priceSymbol}${exitPrice} | ${status} | P&L: ₹${pnl.toFixed(2)} (${pnlPct.toFixed(2)}%) | ${reason}`,
 });
 
 // ── Save all files ──────────────────────────────────────────────────────────
@@ -163,12 +199,14 @@ writeJSON('brain/mistakes.json', mistakes);
 writeJSON('brain/patterns.json', patterns);
 writeJSON('brain/performance.json', perf);
 
+const activeStats = isForex ? perf.forex_summary : perf.summary;
 console.log(`\n✅ Trade #${tradeId} closed.`);
-console.log(`   ${trade.symbol} | ${status} | ₹${exitPrice} | P&L: ₹${pnl.toFixed(2)} (${pnlPct.toFixed(1)}%)`);
+console.log(`   ${tradeLabel} | ${status} | ${priceSymbol}${exitPrice} | P&L: ₹${pnl.toFixed(2)} (${pnlPct.toFixed(1)}%)`);
 console.log(`   Lesson saved to brain/lessons.json`);
 if (status === 'LOSS') console.log(`   Mistake rule saved to brain/mistakes.json`);
 console.log(`   Pattern "${patternTag}": ${pattern.win_rate_pct}% win rate over ${pattern.trades} trades`);
-console.log(`\n📊 Overall: ${s.wins}W / ${s.losses}L | Win Rate: ${s.win_rate_pct}% | Capital: ₹${s.current_capital_inr}`);
+const acctLabel = isForex ? 'Forex' : 'NSE';
+console.log(`\n📊 ${acctLabel}: ${activeStats.wins}W / ${activeStats.losses}L | Win Rate: ${activeStats.win_rate_pct}% | Capital: ₹${activeStats.current_capital_inr}`);
 
 // ── Helper functions ────────────────────────────────────────────────────────
 

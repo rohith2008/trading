@@ -29,14 +29,20 @@ if (!openTrades.length) {
 // ── Fetch live prices ──────────────────────────────────────────────────────────
 async function getLivePrices(symbols) {
   const prices = {};
+  let disconnect;
   try {
-    const { evaluate, disconnect } = await import('../src/connection.js');
+    const mod = await import('../src/connection.js');
+    const evaluate = mod.evaluate;
+    disconnect = mod.disconnect;
     const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
     const BARS_PATH = 'window.TradingViewApi._activeChartWidgetWV.value()._chartWidget.model().mainSeries().bars()';
     for (const sym of symbols) {
       try {
-        await evaluate(`(function(){ ${CHART_API}.setSymbol('${sym}', function(){}); })()`);
-        await new Promise(r => setTimeout(r, 3000));
+        // Wait for setSymbol callback before reading bars
+        await evaluate(
+          `new Promise(function(resolve) { ${CHART_API}.setSymbol('${sym}', function(){ setTimeout(resolve, 800); }); })`,
+          { awaitPromise: true }
+        );
         const data = await evaluate(`(function() {
           var bars = ${BARS_PATH};
           if (bars && typeof bars.lastIndex === 'function') {
@@ -45,11 +51,20 @@ async function getLivePrices(symbols) {
           }
           return {};
         })()`);
-        if (data?.last && data.last > 0) prices[sym] = data.last;
-      } catch { /* skip */ }
+        if (data?.last && data.last > 0) {
+          prices[sym] = data.last;
+        } else {
+          console.warn(`  [warn] No price for ${sym} — bars may not have loaded`);
+        }
+      } catch (err) {
+        console.warn(`  [warn] Failed to fetch price for ${sym}: ${err.message}`);
+      }
     }
     await disconnect();
-  } catch { /* CDP unavailable */ }
+  } catch (err) {
+    console.warn(`  [warn] CDP unavailable — live prices skipped: ${err.message}`);
+    if (disconnect) await disconnect().catch(() => {});
+  }
   return prices;
 }
 
